@@ -1,83 +1,71 @@
-from langgraph.graph import StateGraph, END
-from typing import TypedDict
+from langgraph.graph import StateGraph, START
+from pydantic import BaseModel
+from backend.config import llm  # your LLM from config (e.g., Gemini, OpenAI, etc.)
 
-from .nodes import (
-    classify_intent,
-    extract_details,
-    info_node,
-    booking_node,
-    recommendation_node,
-    general_chat_node,
-)
+# --- 1. Define the schema of the conversation state ---
+class ChatState(BaseModel):
+    input: str
+    intent: str | None = None
+    reply: str | None = None
 
 
-# Define the conversation state schema
-class ChatState(TypedDict, total=False):
-    user_input: str
-    intent: str
-    response: str
-    doctor_name: str
-    specialty: str
-    date: str
-    time: str
+# --- 2. Tools or response generators ---
+def booking_tool(msg: str):
+    return "Sure, I can help you book an appointment. Which doctor or department?"
+
+def info_tool(msg: str):
+    return "We have doctors in cardiology, neurology, and pediatrics."
+
+def recommend_tool(msg: str):
+    return "Please describe your symptoms, and I’ll suggest the right specialist."
 
 
-def create_graph():
-    # Create the graph
-    graph = StateGraph(ChatState)
+# --- 3. LLM-powered intent classification ---
+def classify_intent(state: ChatState):
+    msg = state.input
+    prompt = f"""
+    You are a hospital assistant. Your task is to classify the user's intent 
+    into exactly one of the following categories:
+    [booking, info, recommend, general].
 
-    # Add nodes
-    graph.add_node("classify_intent", classify_intent)
-    # graph.add_node("extract_details", extract_details)
-    graph.add_node("info", info_node)
-    graph.add_node("booking", booking_node)
-    graph.add_node("recommendation", recommendation_node)
-    graph.add_node("general_chat", general_chat_node)
+    Examples:
+    - "I want to book an appointment" → booking
+    - "Tell me about cardiologists" → info
+    - "I have a headache, what should I do?" → recommend
+    - "Hi" → general
 
-    # Set the starting point
-    graph.set_entry_point("classify_intent")
+    User message: "{msg}"
 
-    # Conditional routing after intent classification
-    def route_intent(state):
-        intent = state.get("intent", "").lower()
-        if intent in ["get_info", "book_appointment", "get_recommendation"]:
-            return intent
-        else:
-            return "general"
-        
+    Respond with only one word — the intent.
+    """
+    intent = llm.generate_content(prompt).text.strip().lower()
+    return ChatState(input=msg, intent=intent)
+
+
+# --- 4. Handle each intent ---
+def handle_intent(state: ChatState):
+    msg = state.input
+    intent = state.intent or "general"
+
+    if "book" in intent:
+        reply = booking_tool(msg)
+    elif "info" in intent:
+        reply = info_tool(msg)
+    elif "recommend" in intent:
+        reply = recommend_tool(msg)
+    else:
+        reply = "Hello! I'm your hospital assistant. How can I help you today?"
+
+    return ChatState(input=msg, intent=intent, reply=reply)
+
+
+# --- 5. Build and compile the graph ---
+graph = StateGraph(ChatState)
+graph.add_node("classify_intent", classify_intent)
+graph.add_node("handle_intent", handle_intent)
+
+graph.add_edge(START, "classify_intent")
+graph.add_edge("classify_intent", "handle_intent")
+
+app = graph.compile()
     
-
-    graph.add_conditional_edges(
-        "classify_intent",
-        route_intent,
-        {
-            "get_info": "info",
-            "book_appointment": "booking",
-            "get_recommendation": "recommendation",
-            "general": "general_chat",
-        },
-    )
-
-    # # Conditional routing after extracting details
-    # def route_after_details(state):
-    #     if state.get("intent") == "get_info":
-    #         return "info"
-    #     elif state.get("intent") == "book_appointment":
-    #         return "booking"
-    #     return "general_chat"
-
-    # graph.add_conditional_edges(
-    #     "extract_details",
-    #     route_after_details,
-    #     {
-    #         "get_info": "info",
-    #         "book_appointment": "booking",
-    #         "general_chat": "general_chat",
-    #     },
-    # )
-
-    # End nodes
-    for node in ["info", "booking", "recommendation", "general_chat"]:
-        graph.add_edge(node, END)
-
-    return graph
