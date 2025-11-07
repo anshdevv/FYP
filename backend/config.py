@@ -13,4 +13,6 @@ llm = genai.GenerativeModel("gemini-2.5-flash")
 # Supabase connection
 url = os.getenv("SUPABASE_URL")
 key = os.getenv("SUPABASE_KEY")
+GOOGLE_API_KEY=os.getenv("GOOGLE_API_KEY")
+
 supabase = create_client(url, key)

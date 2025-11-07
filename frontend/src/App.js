@@ -1,27 +1,31 @@
 import { useState } from "react";
 
+import { v4 as uuidv4 } from "uuid";
+
 export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
+  const [sessionId] = useState(uuidv4()); // unique per user/session
 
   const sendMessage = async () => {
     if (!input.trim()) return;
 
     const userMsg = { sender: "user", text: input };
-    setMessages([...messages, userMsg]);
+    setMessages((prev) => [...prev, userMsg]);
     setInput("");
 
     const res = await fetch("http://localhost:8000/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: "u1", message: input }),
+      body: JSON.stringify({ user_input: input, session_id: sessionId }),
     });
-    const data = await res.json();
 
-    const botMsg = { sender: "bot", text: data.response };
-    setMessages((m) => [...m, botMsg]);
+    const data = await res.json();
+    const botMsg = { sender: "bot", text: data.reply };
+    setMessages((prev) => [...prev, botMsg]);
   };
 
+  // ... UI same as befor
   return (
     <div className="flex flex-col items-center h-screen bg-gray-100 p-4">
       <h1 className="text-xl font-bold mb-4">🏥 Hospital CSR Chatbot</h1>
