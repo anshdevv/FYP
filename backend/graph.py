@@ -12,6 +12,9 @@ class ChatState(TypedDict, total=False):
     user_input: str
     intent: str
     response: str
+    specialization:str
+    date:str
+    time:str
 
 
 # --- 2. Create the graph ---
