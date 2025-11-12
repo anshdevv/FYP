@@ -15,33 +15,15 @@ class BookAppointment:
         user_input = state.get("user_input", "")
         patient_id = state.get("patient_id", 1)
 
-        # --- Step 1: Extract details using LLM ---
-        prompt = f"""
-        You are a structured information extractor for a hospital chatbot.
-        From the user's message: "{user_input}"
-        Extract JSON with:
-        {{
-          "doctor_name": "doctor's name or null if not mentioned",
-          "specialization": "probable specialization (e.g. cardiologist, orthopedic, dentist)",
-          "date": "YYYY/MM/DD format; if not exact, say 'tomorrow', 'next Monday', etc.",
-          "time": "24-hour format; morning=09:00, afternoon=14:00, evening=18:00"
-        }}
-        Return ONLY valid JSON, no explanations.
-        """
+        # data = json.loads(clean_json.group())
 
-        result = llm.invoke(prompt)
-        raw_output = getattr(result, "content", str(result))
+        doctor_name = state.get("doctor_name")
+        specialization = state.get("specialization")
+        user_date_str = state.get("date")
+        user_time_str = state.get("time")
+        print(state)
 
-        clean_json = re.search(r"\{.*\}", raw_output, re.DOTALL)
-        if not clean_json:
-            state["response"] = "Sorry, I couldn’t understand your message. Could you rephrase?"
-            return state
-
-        data = json.loads(clean_json.group())
-        doctor_name = data.get("doctor_name")
-        specialization = data.get("specialization")
-        user_date_str = data.get("date")
-        user_time_str = data.get("time")
+        print(doctor_name, specialization, user_date_str, user_time_str)
 
         now = datetime.now(PKT)
 

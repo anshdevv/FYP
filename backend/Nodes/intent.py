@@ -61,29 +61,34 @@ Return the JSON only.
 
         # print(clean_response)
         result = json.loads(clean_response)
-
         intent = result["intent"]
         specialization = result.get("specialization")
         date= result.get("date")
         time = result.get("time")
+        doctor_name = result.get("doctor_name")
+
+        # doctor_name=result."doctor_name")
+
 
         state["intent"] = intent
         state["specialization"] = specialization
         state["date"] = date
         state["time"] = time
-        state["doctor_name"]=result.get("doctor_name")
+        state["doctor_name"]=doctor_name
         
 
 
-        if intent=="general_query":
-            print("inside general query")
-            state = GeneralQuery()(state)
+        # if intent=="general_query":
+        #     print("inside general query")
+        #     state = GeneralQuery()(state)
 
-        elif intent=="recommend_doctor":
-            state = RecommendDoctor()(state)
+        # elif intent=="recommend_doctor":
+        #     state = RecommendDoctor()(state)
 
-        elif intent=="book_appointment":
-            state = BookAppointment()(state)
+        # elif intent=="book_appointment":
+        #     state = BookAppointment()(state)
+        #     print("inside book appointment")
+        #     # pass
         
         # state["intent"] = intent
         return state

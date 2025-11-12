@@ -12,6 +12,7 @@ class ChatState(TypedDict, total=False):
     user_input: str
     intent: str
     response: str
+    doctor_name:str
     specialization:str
     date:str
     time:str
@@ -28,6 +29,7 @@ def create_graph():
 
     graph.add_edge(START, "classify_intent")
 
+# conditional routing
     graph.add_conditional_edges(
         "classify_intent",
         lambda state: state.get("intent"),
@@ -38,8 +40,10 @@ def create_graph():
         },
     )
 
+    # terminal edges
     graph.add_edge("recommend_doctor", END)
     graph.add_edge("book_appointment", END)
     graph.add_edge("general_query", END)
+
 
     return graph
