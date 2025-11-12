@@ -6,7 +6,7 @@ from backend.config import supabase, GOOGLE_API_KEY
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # === Initialize ===
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", api=GOOGLE_API_KEY)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", api_key=GOOGLE_API_KEY)
 PKT = ZoneInfo("Asia/Karachi")
 
 class BookAppointment:
@@ -23,7 +23,7 @@ class BookAppointment:
         {{
           "doctor_name": "doctor's name or null if not mentioned",
           "specialization": "probable specialization (e.g. cardiologist, orthopedic, dentist)",
-          "date": "YYYY/MM/DD format; if you get proper date then write date else write 'tomorrow' or weekdays like 'next Monday' or whatever the user said",
+          "date": "YYYY/MM/DD format; if not exact, say 'tomorrow', 'next Monday', etc.",
           "time": "24-hour format; morning=09:00, afternoon=14:00, evening=18:00"
         }}
         Return ONLY valid JSON, no explanations.
@@ -36,24 +36,20 @@ class BookAppointment:
         if not clean_json:
             state["response"] = "Sorry, I couldn’t understand your message. Could you rephrase?"
             return state
-        data = json.loads(clean_json.group())
 
+        data = json.loads(clean_json.group())
         doctor_name = data.get("doctor_name")
         specialization = data.get("specialization")
+        user_date_str = data.get("date")
+        user_time_str = data.get("time")
 
-        date = data.get("date")
-        time = data.get("time")
-        user_date_str = data.get("date")  # This is what LLM returned as string
-        print(user_date_str)
-        print(data)
-
-        now = datetime.now(PKT)  # current time in PKT
+        now = datetime.now(PKT)
 
         if not user_date_str:
             state["response"] = "Please provide a valid date."
             return state
 
-        # Handle relative terms
+        # --- Step 2: Handle relative/explicit dates ---
         if "tomorrow" in user_date_str.lower():
             target_date = now + timedelta(days=1)
         elif "day after tomorrow" in user_date_str.lower():
@@ -65,28 +61,29 @@ class BookAppointment:
                 state["response"] = "Please provide a valid date in YYYY/MM/DD format."
                 return state
 
-        # Format for PKT / database
         date = target_date.strftime("%Y/%m/%d")
-        weekday =weekday_map[target_date.strftime("%A")]
-        print(weekday)
+        weekday = target_date.strftime("%a").lower()
 
-
-
-        # --- Step 3: Missing details check ---
-        if not time or not date:
-            state["response"] = "Please provide a valid date and time for the appointment."
+        if not user_time_str:
+            state["response"] = "Please provide a valid time in HH:MM (24-hour) format."
             return state
 
-        # --- Step 4: If doctor not mentioned, suggest based on specialization ---
+        # Convert time string to Python time object
+        try:
+            user_time = datetime.strptime(user_time_str, "%H:%M").time()
+        except ValueError:
+            state["response"] = "Please provide time in HH:MM (24-hour) format."
+            return state
+
+        # --- Step 3: If doctor not mentioned, find by specialization ---
         if not doctor_name:
             if not specialization:
-                state["response"] = "Please mention the doctor or your health concern (e.g., skin issue, bones, heart)."
+                state["response"] = "Please mention the doctor or your health concern (e.g., bones, heart, skin)."
                 return state
 
-# Step 1: Get doctors by specialization
             doctors_res = (
                 supabase.table("Doctors")
-                .select()
+                .select("*")
                 .ilike("Specialization", f"%{specialization}%")
                 .execute()
             )
@@ -95,56 +92,66 @@ class BookAppointment:
                 state["response"] = f"No doctors found for specialization '{specialization}'."
                 return state
 
-            # Step 2: If date and time are given, filter by availability
+            # === Day range handling logic ===
+            day_order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+            def is_day_in_range(day_range, target):
+                parts = [p.strip().lower() for p in day_range.split('-')]
+                if len(parts) == 1:
+                    return parts[0] == target
+                start, end = parts
+                s, e, t = day_order.index(start), day_order.index(end), day_order.index(target)
+                if s <= e:
+                    return s <= t <= e
+                else:
+                    return t >= s or t <= e  # wrap-around case
+
             available_doctors = []
 
-            if date and time:
-                # Convert date string to weekday
-                target_date = datetime.strptime(date, "%Y/%m/%d")
-                weekday = target_date.strftime("%A")
+            for doc in doctors_res.data:
+                avail_res = (
+                    supabase.table("doctor_availability")
+                    .select("*")
+                    .eq("doctor_id", doc["id"])
+                    .execute()
+                )
 
-                for doc in doctors_res.data:
-                    avail_res = (
-                        supabase.table("doctor_availability")
-                        .select("*")
-                        .eq("doctor_id", doc["id"])
-                        .filter('days', 'ilike', '%Sun%') # Case-insensitive
-                        .execute()
-                    )
-                    # Skip doctors with no availability that day
-                    if not avail_res.data:
+                for slot in avail_res.data:
+                    if not is_day_in_range(slot["days"], weekday):
                         continue
 
-                    # Check if requested time falls in any available slot
-                    for slot in avail_res.data:
-                        if slot["start_time"] <= time <= slot["end_time"]:
-                            available_doctors.append(doc)
-                            break
-            else:
-                # If date or time missing, include all doctors
-                available_doctors = doctors_res.data
+                    start_t = datetime.strptime(slot["start_time"], "%H:%M:%S").time()
+                    end_t = datetime.strptime(slot["end_time"], "%H:%M:%S").time()
+
+                    if start_t <= user_time <= end_t:
+                        available_doctors.append(doc)
+                        break
 
             if not available_doctors:
-                state["response"] = f"No {specialization} doctors are available on {date} at {time}."
+                state["response"] = f"No {specialization} doctors are available on {date} at {user_time_str}."
                 return state
 
-            # Step 3: Prepare response
             doctor_list = "\n".join([
-                f"- Dr. {d['Name']} ({d['Experience']} yrs exp)" for d in available_doctors
+                f"- Dr. {d['Name']} ({d.get('Experience', 0)} yrs exp)"
+                for d in available_doctors
             ])
 
             state["response"] = (
-                f"Available {specialization} doctors"
-                + (f" for {date} at {time}" if date and time else "")
-                + f":\n{doctor_list}\n\nPlease tell me which doctor you’d like to book an appointment with."
+                f"Available {specialization} doctors on {date} at {user_time_str}:\n"
+                f"{doctor_list}\n\n"
+                "Please tell me which doctor you’d like to book an appointment with."
             )
-
-            # Temporarily store candidate doctors
-            # state["candidate_doctors"] = doctor_res.data
             return state
 
-        # --- Step 5: Lookup doctor ---
-        doctor_res = supabase.table("Doctors").select("id, Name").ilike("Name", f"%{doctor_name}%").execute()
+        # --- Step 4: Doctor mentioned: lookup directly ---
+        doctor_res = (
+            supabase.table("Doctors")
+            .select("id, Name")
+            .ilike("Name", f"%{doctor_name}%")
+            .execute()
+        )
+        print(doctor_res.data)
+
         if not doctor_res.data:
             state["response"] = f"Doctor '{doctor_name}' not found."
             return state
@@ -152,37 +159,57 @@ class BookAppointment:
         doctor = doctor_res.data[0]
         doctor_id = doctor["id"]
 
-        # --- Step 6: Check availability ---
-        weekday = datetime.strptime(date, "%Y/%m/%d").strftime("%A")
-        avail = (
+        # === Step 5: Check availability (with range + time handling) ===
+        avail_res = (
             supabase.table("doctor_availability")
             .select("*")
             .eq("doctor_id", doctor_id)
-            .eq("days", weekday)
             .execute()
         )
 
-        if not avail.data:
-            state["response"] = f"{doctor['Name']} is not available on {weekday}."
+        day_order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+        def is_day_in_range(day_range, target):
+            parts = [p.strip().lower() for p in day_range.split('-')]
+            if len(parts) == 1:
+                return parts[0] == target
+            start, end = parts
+            s, e, t = day_order.index(start), day_order.index(end), day_order.index(target)
+            if s <= e:
+                return s <= t <= e
+            else:
+                return t >= s or t <= e
+
+        available = False
+        for slot in avail_res.data:
+            if not is_day_in_range(slot["days"], weekday):
+                continue
+
+            start_t = datetime.strptime(slot["start_time"], "%H:%M:%S").time()
+            end_t = datetime.strptime(slot["end_time"], "%H:%M:%S").time()
+
+            if start_t <= user_time <= end_t:
+                available = True
+                break
+
+        if not available:
+            state["response"] = f"{doctor['Name']} is not available on {weekday} at {user_time_str}."
             return state
 
-        slot = avail.data[0]
-        if not (slot["start_time"] <= time <= slot["end_time"]):
-            state["response"] = f"{doctor['Name']} is not available at {time}. Please choose another time."
-            return state
-
-        # --- Step 7: Book appointment ---
+        # --- Step 6: Book appointment ---
         appointment = {
-            "created_At": datetime.now(PKT).isoformat(),
             "patient_id": patient_id,
-            "appt date": date,
-            "time": time,
-            "docotr_id": doctor_id,
+            "appointment_date": date,
+            "time": user_time_str,
+            "doctor_id": doctor_id,
         }
         supabase.table("appointments").insert(appointment).execute()
 
         state["response"] = (
             f"✅ Appointment booked successfully!\n"
-            f"Doctor: {doctor['Name']}\nDate: {date}\nTime: {time} (PKT)"
+            f"Doctor: {doctor['Name']}\n"
+            f"Date: {date}\n"
+            f"Time: {user_time_str} (PKT)"
         )
+
         return state

@@ -4,7 +4,7 @@ from ..config import GOOGLE_API_KEY
 class GeneralQuery:
     def __call__(self, state):
 
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", api=GOOGLE_API_KEY)
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", api_key=GOOGLE_API_KEY)
         user_input=state.get("user_input","")
         prompt=f""" 
 you are a helpful customer support agent working at abc hospital.
