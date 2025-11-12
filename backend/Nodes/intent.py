@@ -76,19 +76,4 @@ Return the JSON only.
         state["time"] = time
         state["doctor_name"]=doctor_name
         
-
-
-        # if intent=="general_query":
-        #     print("inside general query")
-        #     state = GeneralQuery()(state)
-
-        # elif intent=="recommend_doctor":
-        #     state = RecommendDoctor()(state)
-
-        # elif intent=="book_appointment":
-        #     state = BookAppointment()(state)
-        #     print("inside book appointment")
-        #     # pass
-        
-        # state["intent"] = intent
         return state
